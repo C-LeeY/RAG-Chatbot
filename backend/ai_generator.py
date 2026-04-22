@@ -1,135 +1,139 @@
-import anthropic
-from typing import List, Optional, Dict, Any
+import json
+from typing import Any, Dict, List, Optional
+
+from zai import ZhipuAiClient
+
 
 class AIGenerator:
-    """Handles interactions with Anthropic's Claude API for generating responses"""
-    
-    # Static system prompt to avoid rebuilding on each call
-    SYSTEM_PROMPT = """ You are an AI assistant specialized in course materials and educational content with access to a comprehensive search tool for course information.
+    """Handles Zhipu/Z.ai GLM responses for course-material questions."""
+
+    SYSTEM_PROMPT = """You are an AI assistant specialized in course materials and educational content with access to a comprehensive search tool for course information.
 
 Search Tool Usage:
-- Use the search tool **only** for questions about specific course content or detailed educational materials
-- **One search per query maximum**
-- Synthesize search results into accurate, fact-based responses
-- If search yields no results, state this clearly without offering alternatives
+- Use the search tool only for questions about specific course content or detailed educational materials.
+- Use at most one search per query.
+- Synthesize search results into accurate, fact-based responses.
+- If search yields no results, state this clearly without offering alternatives.
 
 Response Protocol:
-- **General knowledge questions**: Answer using existing knowledge without searching
-- **Course-specific questions**: Search first, then answer
-- **No meta-commentary**:
- - Provide direct answers only — no reasoning process, search explanations, or question-type analysis
- - Do not mention "based on the search results"
+- General knowledge questions: answer using existing knowledge without searching.
+- Course-specific questions: search first, then answer.
+- No meta-commentary: provide direct answers only; do not describe your search process.
 
-
-All responses must be:
-1. **Brief, Concise and focused** - Get to the point quickly
-2. **Educational** - Maintain instructional value
-3. **Clear** - Use accessible language
-4. **Example-supported** - Include relevant examples when they aid understanding
+All responses must be brief, educational, clear, and example-supported when examples help.
 Provide only the direct answer to what was asked.
 """
-    
+
     def __init__(self, api_key: str, model: str):
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = ZhipuAiClient(api_key=api_key) if api_key else None
         self.model = model
-        
-        # Pre-build base API parameters
         self.base_params = {
             "model": self.model,
             "temperature": 0,
-            "max_tokens": 800
+            "max_tokens": 800,
         }
-    
-    def generate_response(self, query: str,
-                         conversation_history: Optional[str] = None,
-                         tools: Optional[List] = None,
-                         tool_manager=None) -> str:
-        """
-        Generate AI response with optional tool usage and conversation context.
-        
-        Args:
-            query: The user's question or request
-            conversation_history: Previous messages for context
-            tools: Available tools the AI can use
-            tool_manager: Manager to execute tools
-            
-        Returns:
-            Generated response as string
-        """
-        
-        # Build system content efficiently - avoid string ops when possible
+
+    def generate_response(
+        self,
+        query: str,
+        conversation_history: Optional[str] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_manager=None,
+    ) -> str:
+        """Generate a response, optionally allowing one GLM function call."""
+
+        if not self.client:
+            raise ValueError("ZAI_API_KEY is not configured")
+
         system_content = (
             f"{self.SYSTEM_PROMPT}\n\nPrevious conversation:\n{conversation_history}"
-            if conversation_history 
+            if conversation_history
             else self.SYSTEM_PROMPT
         )
-        
-        # Prepare API call parameters efficiently
-        api_params = {
-            **self.base_params,
-            "messages": [{"role": "user", "content": query}],
-            "system": system_content
-        }
-        
-        # Add tools if available
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": query},
+        ]
+
+        request_params = {**self.base_params, "messages": messages}
         if tools:
-            api_params["tools"] = tools
-            api_params["tool_choice"] = {"type": "auto"}
-        
-        # Get response from Claude
-        response = self.client.messages.create(**api_params)
-        
-        # Handle tool execution if needed
-        if response.stop_reason == "tool_use" and tool_manager:
-            return self._handle_tool_execution(response, api_params, tool_manager)
-        
-        # Return direct response
-        return response.content[0].text
-    
-    def _handle_tool_execution(self, initial_response, base_params: Dict[str, Any], tool_manager):
-        """
-        Handle execution of tool calls and get follow-up response.
-        
-        Args:
-            initial_response: The response containing tool use requests
-            base_params: Base API parameters
-            tool_manager: Manager to execute tools
-            
-        Returns:
-            Final response text after tool execution
-        """
-        # Start with existing messages
-        messages = base_params["messages"].copy()
-        
-        # Add AI's tool use response
-        messages.append({"role": "assistant", "content": initial_response.content})
-        
-        # Execute all tool calls and collect results
-        tool_results = []
-        for content_block in initial_response.content:
-            if content_block.type == "tool_use":
-                tool_result = tool_manager.execute_tool(
-                    content_block.name, 
-                    **content_block.input
-                )
-                
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": content_block.id,
-                    "content": tool_result
-                })
-        
-        # Add tool results as single message
-        if tool_results:
-            messages.append({"role": "user", "content": tool_results})
-        
-        # Prepare final API call without tools
-        final_params = {
+            request_params["tools"] = tools
+            request_params["tool_choice"] = "auto"
+
+        response = self.client.chat.completions.create(**request_params)
+        message = response.choices[0].message
+        tool_calls = self._get_tool_calls(message)
+
+        if tool_calls and tool_manager:
+            return self._handle_tool_execution(messages, message, tool_calls, tool_manager)
+
+        return self._get_attr(message, "content", "") or ""
+
+    def _handle_tool_execution(
+        self,
+        messages: List[Dict[str, Any]],
+        assistant_message: Any,
+        tool_calls: List[Any],
+        tool_manager,
+    ) -> str:
+        """Execute requested function calls and ask GLM for a final answer."""
+
+        messages = [*messages, self._message_to_dict(assistant_message)]
+
+        for tool_call in tool_calls:
+            function = self._get_attr(tool_call, "function")
+            name = self._get_attr(function, "name")
+            arguments = self._parse_arguments(self._get_attr(function, "arguments", "{}"))
+            tool_result = tool_manager.execute_tool(name, **arguments)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": self._get_attr(tool_call, "id"),
+                    "name": name,
+                    "content": tool_result,
+                }
+            )
+
+        final_response = self.client.chat.completions.create(
             **self.base_params,
-            "messages": messages,
-            "system": base_params["system"]
+            messages=messages,
+        )
+        return self._get_attr(final_response.choices[0].message, "content", "") or ""
+
+    def _get_tool_calls(self, message: Any) -> List[Any]:
+        return list(self._get_attr(message, "tool_calls", []) or [])
+
+    def _message_to_dict(self, message: Any) -> Dict[str, Any]:
+        if isinstance(message, dict):
+            return message
+
+        result = {
+            "role": self._get_attr(message, "role", "assistant"),
+            "content": self._get_attr(message, "content", "") or "",
         }
-        
-        # Get final response
-        final_response = self.client.messages.create(**final_params)
-        return final_response.content[0].text
+        tool_calls = self._get_tool_calls(message)
+        if tool_calls:
+            result["tool_calls"] = [self._tool_call_to_dict(tool_call) for tool_call in tool_calls]
+        return result
+
+    def _tool_call_to_dict(self, tool_call: Any) -> Dict[str, Any]:
+        function = self._get_attr(tool_call, "function")
+        return {
+            "id": self._get_attr(tool_call, "id"),
+            "type": self._get_attr(tool_call, "type", "function"),
+            "function": {
+                "name": self._get_attr(function, "name"),
+                "arguments": self._get_attr(function, "arguments", "{}"),
+            },
+        }
+
+    def _parse_arguments(self, raw_arguments: str) -> Dict[str, Any]:
+        try:
+            return json.loads(raw_arguments or "{}")
+        except json.JSONDecodeError:
+            return {}
+
+    def _get_attr(self, value: Any, attr: str, default: Any = None) -> Any:
+        if isinstance(value, dict):
+            return value.get(attr, default)
+        return getattr(value, attr, default)

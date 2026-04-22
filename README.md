@@ -4,15 +4,15 @@ A Retrieval-Augmented Generation (RAG) system designed to answer questions about
 
 ## Overview
 
-This application is a full-stack web application that enables users to query course materials and receive intelligent, context-aware responses. It uses ChromaDB for vector storage, Anthropic's Claude for AI generation, and provides a web interface for interaction.
+This application is a full-stack web application that enables users to query course materials and receive intelligent, context-aware responses. It uses ChromaDB for vector storage, Zhipu/Z.ai GLM models for AI generation, and provides a web interface for interaction.
 
 
 ## Prerequisites
 
 - Python 3.13 or higher
 - uv (Python package manager)
-- An Anthropic API key (for Claude AI)
-- **For Windows**: Use Git Bash to run the application commands - [Download Git for Windows](https://git-scm.com/downloads/win)
+- A Zhipu/Z.ai API key
+- **For Windows**: Git Bash is recommended for `run.sh`; PowerShell users can run the manual commands below.
 
 ## Installation
 
@@ -20,17 +20,19 @@ This application is a full-stack web application that enables users to query cou
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
+   On Windows, if `uv` is installed through Python but not on `PATH`, use `python -m uv` in place of `uv` for commands such as `python -m uv sync --dev`.
 
 2. **Install Python dependencies**
    ```bash
-   uv sync
+   uv sync --dev
    ```
 
 3. **Set up environment variables**
    
    Create a `.env` file in the root directory:
    ```bash
-   ANTHROPIC_API_KEY=your_anthropic_api_key_here
+   ZAI_API_KEY=your_zhipu_api_key_here
+   ZAI_MODEL=glm-4.7-flash
    ```
 
 ## Running the Application
@@ -43,6 +45,8 @@ chmod +x run.sh
 ./run.sh
 ```
 
+On Windows, run this script from Git Bash.
+
 ### Manual Start
 
 ```bash
@@ -53,4 +57,14 @@ uv run uvicorn app:app --reload --port 8000
 The application will be available at:
 - Web Interface: `http://localhost:8000`
 - API Documentation: `http://localhost:8000/docs`
+
+## Testing
+
+Run the Python test suite from the repository root:
+
+```bash
+uv run pytest
+```
+
+The current tests cover the shared Pydantic models and are located in `tests/`. Add new tests as `tests/test_<module>.py` when changing backend behavior.
 

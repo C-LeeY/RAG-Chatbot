@@ -1,16 +1,17 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from the repository root .env file, regardless of cwd.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 @dataclass
 class Config:
     """Configuration settings for the RAG system"""
-    # Anthropic API settings
-    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+    # Zhipu/Z.ai API settings
+    ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
+    ZAI_MODEL: str = os.getenv("ZAI_MODEL", "glm-4.7-flash")
     
     # Embedding model settings
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
