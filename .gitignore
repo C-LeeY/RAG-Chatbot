@@ -29,3 +29,10 @@ uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# Codex / worktree related
+.trees/
+
+# Server logs
+server.err.log
+server.out.log
